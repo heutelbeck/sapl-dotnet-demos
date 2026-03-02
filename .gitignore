@@ -1,0 +1,24 @@
+## Build results
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+
+## NuGet
+*.nupkg
+*.snupkg
+
+## Visual Studio / Rider
+.vs/
+*.suo
+*.user
+*.userosscache
+.idea/
+*.iml
+
+## Test results
+[Tt]est[Rr]esult*/
+
+## OS files
+.DS_Store
+Thumbs.db
