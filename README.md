@@ -82,7 +82,7 @@ curl -N http://localhost:3000/api/streaming/heartbeat/recoverable
 To test JWT-authenticated endpoints (export):
 
 ```
-TOKEN=$(curl -s -X POST http://localhost:8080/realms/demo/protocol/openid-connect/token -H "Content-Type: application/x-www-form-urlencoded" -d "grant_type=password&client_id=dotnet-app&client_secret=dev-secret&username=clinician1&password=password" | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+TOKEN=$(curl -s -X POST http://localhost:8080/realms/demo/protocol/openid-connect/token -H "Content-Type: application/x-www-form-urlencoded" -d "grant_type=password&client_id=demo-app&client_secret=dev-secret&username=clinician1&password=password" | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 ```
 
 Then use it:

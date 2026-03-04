@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using Sapl.AspNetCore.Attributes;
+using Sapl.Core.Attributes;
 using Sapl.Demo.Data;
 
 namespace Sapl.Demo.Controllers;

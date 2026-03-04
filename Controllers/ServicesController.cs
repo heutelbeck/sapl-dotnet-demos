@@ -7,9 +7,9 @@ namespace Sapl.Demo.Controllers;
 [Route("api/services")]
 public sealed class ServicesController : ControllerBase
 {
-    private readonly PatientService _patientService;
+    private readonly IPatientService _patientService;
 
-    public ServicesController(PatientService patientService)
+    public ServicesController(IPatientService patientService)
     {
         _patientService = patientService;
     }

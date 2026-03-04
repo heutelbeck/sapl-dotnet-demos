@@ -10,7 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Sapl.AspNetCore" Version="4.0.0-rc.1" />
+    <ProjectReference Include="..\sapl-dotnet\Sapl.AspNetCore\Sapl.AspNetCore.csproj" />
   </ItemGroup>
 
 </Project>

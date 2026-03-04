@@ -1,30 +1,12 @@
-using System.Text.Json;
-using Sapl.Core.Authorization;
-using Sapl.Core.Constraints;
-using Sapl.Core.Enforcement;
 using Sapl.Demo.Data;
 
 namespace Sapl.Demo.Services;
 
-public sealed class PatientService
+public sealed class PatientService : IPatientService
 {
-    private readonly EnforcementEngine _engine;
-    private readonly ILogger<PatientService> _logger;
-
-    public PatientService(EnforcementEngine engine, ILogger<PatientService> logger)
+    public Task<object?> ListPatients(CancellationToken ct = default)
     {
-        _engine = engine;
-        _logger = logger;
-    }
-
-    public async Task<object?> ListPatients(CancellationToken ct = default)
-    {
-        var sub = AuthorizationSubscription.Create("anonymous", "service:listPatients", "patients");
-        var result = await _engine.PreEnforceAsync(sub, ct);
-        if (!result.IsPermitted)
-            throw new AccessDeniedException("Access denied.");
-
-        return PatientData.Patients.Select(p => new
+        var result = PatientData.Patients.Select(p => new
         {
             p.Id,
             p.Name,
@@ -32,71 +14,48 @@ public sealed class PatientService
             p.Diagnosis,
             p.Classification,
         }).ToArray();
+
+        return Task.FromResult<object?>(result);
     }
 
-    public async Task<object?> FindPatient(string name, CancellationToken ct = default)
+    public Task<object?> FindPatient(string name, CancellationToken ct = default)
     {
-        var sub = AuthorizationSubscription.Create("anonymous", "service:findPatient", "patient");
-        var result = await _engine.PreEnforceAsync(sub, ct);
-        if (!result.IsPermitted)
-            throw new AccessDeniedException("Access denied.");
-
-        return PatientData.Patients
+        var result = PatientData.Patients
             .Where(p => p.Name.Contains(name, StringComparison.OrdinalIgnoreCase))
             .Select(p => new { p.Id, p.Name, p.Ssn, p.Diagnosis, p.Classification })
             .ToArray();
+
+        return Task.FromResult<object?>(result);
     }
 
-    public async Task<object?> SearchPatients(string query, CancellationToken ct = default)
+    public Task<object?> SearchPatients(string query, CancellationToken ct = default)
     {
-        var sub = AuthorizationSubscription.Create("anonymous", "service:searchPatients", "patientSearch");
-        var result = await _engine.PreEnforceAsync(sub, ct);
-        if (!result.IsPermitted)
-            throw new AccessDeniedException("Access denied.");
-
-        var patients = PatientData.Patients
+        var result = PatientData.Patients
             .Where(p => p.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
                      || p.Diagnosis.Contains(query, StringComparison.OrdinalIgnoreCase))
             .Select(p => new { p.Id, p.Name, p.Ssn, p.Diagnosis, p.Classification })
             .ToArray();
 
-        if (result.Bundle is null)
-            return patients;
-
-        var filtered = result.Bundle.HandleAllOnNextConstraints(patients);
-        result.Bundle.CheckFailedObligations();
-        return filtered;
+        return Task.FromResult<object?>(result);
     }
 
-    public async Task<object?> GetPatientDetail(string id, CancellationToken ct = default)
+    public Task<object?> GetPatientDetail(string id, CancellationToken ct = default)
     {
         var patient = PatientData.Patients.FirstOrDefault(p => p.Id == id);
         if (patient is null)
-            return null;
+            return Task.FromResult<object?>(null);
 
-        var data = new { patient.Id, patient.Name, patient.Ssn, patient.Diagnosis, patient.Classification };
-        var resource = new { type = "patientDetail", data };
-        var sub = AuthorizationSubscription.Create("anonymous", "service:getPatientDetail", resource);
-
-        var postResult = await _engine.PostEnforceAsync(sub, (object)data, ct);
-        if (!postResult.IsPermitted)
-            throw new AccessDeniedException("Access denied.");
-
-        return postResult.Value;
+        object? data = new { patient.Id, patient.Name, patient.Ssn, patient.Diagnosis, patient.Classification };
+        return Task.FromResult<object?>(data);
     }
 
-    public async Task<object?> GetPatientSummary(string id, CancellationToken ct = default)
+    public Task<object?> GetPatientSummary(string id, CancellationToken ct = default)
     {
         var patient = PatientData.Patients.FirstOrDefault(p => p.Id == id);
         if (patient is null)
-            return null;
+            return Task.FromResult<object?>(null);
 
-        var sub = AuthorizationSubscription.Create("anonymous", "service:getPatientSummary", "patientSummary");
-        var result = await _engine.PreEnforceAsync(sub, ct);
-        if (!result.IsPermitted)
-            throw new AccessDeniedException("Access denied.");
-
-        var data = new
+        object? data = new
         {
             patient.Id,
             patient.Name,
@@ -106,34 +65,11 @@ public sealed class PatientService
             insurance = "INS-9876-XYZ",
         };
 
-        if (result.Bundle is null)
-            return data;
-
-        var processed = result.Bundle.HandleAllOnNextConstraints(data);
-        result.Bundle.CheckFailedObligations();
-        return processed;
+        return Task.FromResult<object?>(data);
     }
 
-    public async Task<object?> Transfer(double amount, CancellationToken ct = default)
+    public Task<object?> Transfer(double amount, CancellationToken ct = default)
     {
-        var sub = AuthorizationSubscription.Create("anonymous", "service:transfer", "account");
-        var result = await _engine.PreEnforceAsync(sub, ct);
-        if (!result.IsPermitted)
-            throw new AccessDeniedException("Access denied.");
-
-        var finalAmount = amount;
-        if (result.Bundle is not null)
-        {
-            var miContext = new Core.Constraints.Api.MethodInvocationContext(
-                [amount], "Transfer", "PatientService", null);
-            result.Bundle.HandleMethodInvocationHandlers(miContext);
-            result.Bundle.CheckFailedObligations();
-            if (miContext.Args[0] is double capped)
-            {
-                finalAmount = capped;
-            }
-        }
-
-        return new { transferred = finalAmount };
+        return Task.FromResult<object?>(new { transferred = amount });
     }
 }

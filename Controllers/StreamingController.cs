@@ -1,9 +1,11 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
-using Sapl.AspNetCore.Streaming;
 using Sapl.Core.Authorization;
 using Sapl.Core.Enforcement;
+using Sapl.Core.Interception;
+using Sapl.Demo.Data;
+using Sapl.Demo.Services;
 
 namespace Sapl.Demo.Controllers;
 
@@ -11,104 +13,66 @@ namespace Sapl.Demo.Controllers;
 [Route("api/streaming")]
 public sealed class StreamingController : ControllerBase
 {
+    private readonly IStreamingService _streamingService;
     private readonly EnforcementEngine _engine;
 
-    public StreamingController(EnforcementEngine engine)
+    public StreamingController(IStreamingService streamingService, EnforcementEngine engine)
     {
+        _streamingService = streamingService;
         _engine = engine;
     }
+
+    // Till-denied and drop-while-denied: the controller knows nothing about SAPL.
+    // Enforcement is fully handled by the proxy on IStreamingService.
 
     [HttpGet("heartbeat/till-denied")]
     public async Task HeartbeatTillDenied()
     {
-        var sub = AuthorizationSubscription.Create("anonymous", "stream:heartbeat", "heartbeat");
-        var ct = HttpContext.RequestAborted;
-
-        var stream = _engine.EnforceTillDenied(
-            sub,
-            () => GenerateHeartbeats(ct),
-            onDeny: _ =>
-            {
-                // Will be handled as AccessDeniedException in the stream
-            },
-            cancellationToken: ct);
-
-        var wrappedStream = WrapTillDenied(stream, ct);
-        await SseResultAdapter.WriteSseStreamAsync(HttpContext, wrappedStream, ct);
+        await WriteSseAsync(_streamingService.HeartbeatTillDenied(HttpContext.RequestAborted));
     }
 
     [HttpGet("heartbeat/drop-while-denied")]
     public async Task HeartbeatDropWhileDenied()
     {
-        var sub = AuthorizationSubscription.Create("anonymous", "stream:heartbeat", "heartbeat");
-        var ct = HttpContext.RequestAborted;
-
-        var stream = _engine.EnforceDropWhileDenied(sub, () => GenerateHeartbeats(ct), ct);
-        await SseResultAdapter.WriteSseStreamAsync(HttpContext, stream, ct);
+        await WriteSseAsync(_streamingService.HeartbeatDropWhileDenied(HttpContext.RequestAborted));
     }
 
+    // Recoverable enforcement requires IAsyncEnumerable<object> because the interceptor
+    // injects AccessSignal items (Denied/Recovered) into the data stream to notify clients
+    // of authorization state changes. A concrete type like IAsyncEnumerable<Heartbeat> would
+    // make signal injection impossible — the stream would silently pause/resume instead,
+    // leaving the client with no visibility into deny/recover transitions.
     [HttpGet("heartbeat/recoverable")]
     public async Task HeartbeatRecoverable()
     {
+        var stream = _streamingService.HeartbeatRecoverable(HttpContext.RequestAborted);
+
+        var withSignals = stream.RecoverWith(
+            onDenyItem: () => (object)new { type = "ACCESS_SUSPENDED", message = "Waiting for re-authorization" },
+            onRecoverItem: () => (object)new { type = "ACCESS_RESTORED", message = "Authorization restored" });
+
+        await WriteSseAsync(withSignals);
+    }
+
+    // --- Manual recoverable: uses EnforcementEngine directly with explicit callbacks.
+    //     Full control over subscription building and signal handling.
+    [HttpGet("heartbeat/recoverable/manual")]
+    public async Task HeartbeatRecoverableManual()
+    {
         var sub = AuthorizationSubscription.Create("anonymous", "stream:heartbeat", "heartbeat");
         var ct = HttpContext.RequestAborted;
-
-        var outputStream = WrapRecoverable(sub, ct);
-        await SseResultAdapter.WriteSseStreamAsync(HttpContext, outputStream, ct);
-    }
-
-    private async IAsyncEnumerable<object> WrapTillDenied(
-        IAsyncEnumerable<object> source,
-        [EnumeratorCancellation] CancellationToken ct)
-    {
-        var channel = System.Threading.Channels.Channel.CreateUnbounded<object>();
-
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await foreach (var item in source.WithCancellation(ct))
-                {
-                    await channel.Writer.WriteAsync(item, ct);
-                }
-            }
-            catch (Core.Constraints.AccessDeniedException)
-            {
-                await channel.Writer.WriteAsync(
-                    new { type = "ACCESS_DENIED", message = "Stream terminated by policy" }, CancellationToken.None);
-            }
-            catch (OperationCanceledException)
-            {
-                // Normal
-            }
-            finally
-            {
-                channel.Writer.TryComplete();
-            }
-        }, ct);
-
-        await foreach (var item in channel.Reader.ReadAllAsync(ct))
-        {
-            yield return item;
-        }
-    }
-
-    private async IAsyncEnumerable<object> WrapRecoverable(
-        AuthorizationSubscription sub,
-        [EnumeratorCancellation] CancellationToken ct)
-    {
-        var outputItems = System.Threading.Channels.Channel.CreateUnbounded<object>();
+        var output = System.Threading.Channels.Channel.CreateUnbounded<object>();
 
         var stream = _engine.EnforceRecoverableIfDenied(
             sub,
             () => GenerateHeartbeats(ct),
             onDeny: _ =>
             {
-                outputItems.Writer.TryWrite(new { type = "ACCESS_SUSPENDED", message = "Waiting for re-authorization" });
+                output.Writer.TryWrite(new { type = "ACCESS_SUSPENDED", message = "Waiting for re-authorization" });
             },
             onRecover: _ =>
             {
-                outputItems.Writer.TryWrite(new { type = "ACCESS_RESTORED", message = "Authorization restored" });
+                output.Writer.TryWrite(new { type = "ACCESS_RESTORED", message = "Authorization restored" });
             },
             cancellationToken: ct);
 
@@ -118,22 +82,37 @@ public sealed class StreamingController : ControllerBase
             {
                 await foreach (var item in stream.WithCancellation(ct))
                 {
-                    await outputItems.Writer.WriteAsync(item, ct);
+                    await output.Writer.WriteAsync(item, ct);
                 }
             }
             catch (OperationCanceledException)
             {
-                // Normal
             }
             finally
             {
-                outputItems.Writer.TryComplete();
+                output.Writer.TryComplete();
             }
         }, ct);
 
-        await foreach (var item in outputItems.Reader.ReadAllAsync(ct))
+        await WriteSseAsync(output.Reader.ReadAllAsync(ct));
+    }
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
+
+    private async Task WriteSseAsync<T>(IAsyncEnumerable<T> stream)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+
+        await foreach (var item in stream.WithCancellation(HttpContext.RequestAborted))
         {
-            yield return item;
+            var json = JsonSerializer.Serialize(item, JsonOptions);
+            await Response.WriteAsync($"data: {json}\n\n");
+            await Response.Body.FlushAsync();
         }
     }
 
@@ -143,7 +122,7 @@ public sealed class StreamingController : ControllerBase
         var seq = 0;
         while (!ct.IsCancellationRequested)
         {
-            yield return new { seq, ts = DateTime.UtcNow.ToString("o") };
+            yield return new Heartbeat(seq, DateTime.UtcNow.ToString("o"));
             seq++;
             await Task.Delay(2000, ct);
         }

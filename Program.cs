@@ -27,7 +27,8 @@ builder.Services.AddSaplConstraintHandler<CapTransferHandler>();
 builder.Services.AddSaplConstraintHandler<NotifyOnErrorHandler>();
 builder.Services.AddSaplConstraintHandler<EnrichErrorHandler>();
 
-builder.Services.AddScoped<PatientService>();
+builder.Services.AddSaplService<IPatientService, PatientService>();
+builder.Services.AddSaplService<IStreamingService, StreamingService>();
 
 var app = builder.Build();
 

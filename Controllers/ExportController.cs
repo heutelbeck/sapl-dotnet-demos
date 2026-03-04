@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
-using Sapl.Core.Authorization;
-using Sapl.Core.Constraints;
-using Sapl.Core.Enforcement;
+using Sapl.Core.Attributes;
+using Sapl.Core.Subscription;
 
 namespace Sapl.Demo.Controllers;
 
@@ -9,73 +8,50 @@ namespace Sapl.Demo.Controllers;
 [Route("api")]
 public sealed class ExportController : ControllerBase
 {
-    private readonly EnforcementEngine _engine;
     private readonly ILogger<ExportController> _logger;
 
-    public ExportController(EnforcementEngine engine, ILogger<ExportController> logger)
+    public ExportController(ILogger<ExportController> logger)
     {
-        _engine = engine;
         _logger = logger;
     }
 
     [HttpGet("exportData/{pilotId}/{sequenceId}")]
-    public async Task<IActionResult> GetExportData(string pilotId, string sequenceId)
+    [PreEnforce(Action = "exportData", Customizer = typeof(ExportCustomizer))]
+    public IActionResult GetExportData(string pilotId, string sequenceId)
     {
-        var token = ExtractBearerToken();
-        if (token is null)
-        {
-            return Unauthorized(new { error = "Bearer token required" });
-        }
-
-        var sub = AuthorizationSubscription.Create(
-            "anonymous",
-            "exportData",
-            new { pilotId, sequenceId },
-            secrets: new { jwt = token });
-
-        var result = await _engine.PreEnforceAsync(sub, HttpContext.RequestAborted);
-        if (!result.IsPermitted)
-        {
-            return StatusCode(403, new { error = "Access denied by policy" });
-        }
-
         _logger.LogInformation("exportData pilot={PilotId} sequence={SequenceId}", pilotId, sequenceId);
         return Ok(new { pilotId, sequenceId, data = "export-payload" });
     }
 
     [HttpGet("exportData2/{pilotId}/{sequenceId}")]
-    public async Task<IActionResult> GetExportData2(string pilotId, string sequenceId)
+    [PreEnforce(Action = "exportData", Customizer = typeof(ExportCustomizer))]
+    public IActionResult GetExportData2(string pilotId, string sequenceId)
     {
-        var token = ExtractBearerToken();
-        if (token is null)
-        {
-            return Unauthorized(new { error = "Bearer token required" });
-        }
-
-        var sub = AuthorizationSubscription.Create(
-            "anonymous",
-            "exportData",
-            new { pilotId, sequenceId },
-            secrets: new { jwt = token });
-
-        var result = await _engine.PreEnforceAsync(sub, HttpContext.RequestAborted);
-        if (!result.IsPermitted)
-        {
-            return Ok(new { error = "access_denied", decision = "DENY" });
-        }
-
         _logger.LogInformation("exportData2 pilot={PilotId} sequence={SequenceId}", pilotId, sequenceId);
         return Ok(new { pilotId, sequenceId, data = "export-payload" });
     }
 
-    private string? ExtractBearerToken()
+    // ISubscriptionCustomizer allows programmatic subscription building beyond what
+    // attribute string properties can express. The interceptor resolves the customizer
+    // from DI (or creates it via ActivatorUtilities) and calls Customize() before
+    // building the subscription. Here it forwards the bearer token as secrets and
+    // sets the resource with pilotId/sequenceId at the top level (the policy checks
+    // resource.pilotId and resource.sequenceId directly).
+    private sealed class ExportCustomizer : ISubscriptionCustomizer
     {
-        var authHeader = HttpContext.Request.Headers.Authorization.ToString();
-        if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        public void Customize(SubscriptionContext context, SubscriptionBuilder builder)
         {
-            return null;
-        }
+            if (context.BearerToken is not null)
+            {
+                builder.WithStaticSecrets(new { jwt = context.BearerToken });
+            }
 
-        return authHeader["Bearer ".Length..];
+            if (context.MethodArguments is not null)
+            {
+                context.MethodArguments.TryGetValue("pilotId", out var pilotId);
+                context.MethodArguments.TryGetValue("sequenceId", out var sequenceId);
+                builder.WithStaticResource(new { pilotId, sequenceId });
+            }
+        }
     }
 }
