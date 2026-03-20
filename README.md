@@ -40,7 +40,7 @@ This demo covers the full range of SAPL enforcement patterns:
 docker compose up -d
 ```
 
-This starts a SAPL PDP on `http://localhost:8443` and Keycloak on `http://localhost:8080`. Wait roughly 30 seconds for Keycloak to finish importing the realm.
+This starts a SAPL PDP on `http://localhost:8443` and Keycloak on `http://localhost:8080`. Keycloak takes about 30 seconds to import the realm on first start. Wait until `curl -s http://localhost:8080/realms/demo` returns JSON before running the app.
 
 ### 2. Install dependencies and run
 
