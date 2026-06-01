@@ -1,32 +1,29 @@
 using System.Text.Json;
-using Sapl.Core.Constraints.Api;
+using Microsoft.AspNetCore.Http;
+using Sapl.Core.Pep.Constraints;
 
 namespace Sapl.Demo.Handlers;
 
-public sealed class InjectTimestampHandler : IMethodInvocationConstraintHandlerProvider
+public sealed class InjectTimestampHandler(IHttpContextAccessor accessor, ILogger<InjectTimestampHandler> logger) : IConstraintHandlerProvider
 {
-    private readonly ILogger<InjectTimestampHandler> _logger;
-
-    public InjectTimestampHandler(ILogger<InjectTimestampHandler> logger)
+    public IReadOnlyList<ScopedHandler> GetConstraintHandlers(JsonElement constraint, IReadOnlySet<SignalType> supportedSignals)
     {
-        _logger = logger;
-    }
-
-    public bool IsResponsible(JsonElement constraint)
-    {
-        return constraint.TryGetProperty("type", out var t) && t.GetString() == "injectTimestamp";
-    }
-
-    public Action<MethodInvocationContext> GetHandler(JsonElement constraint)
-    {
-        return context =>
+        if (!IConstraintHandlerProvider.ConstraintIsOfType(constraint, "injectTimestamp"))
         {
-            var timestamp = DateTime.UtcNow.ToString("o");
-            if (context.Request is Microsoft.AspNetCore.Http.HttpRequest httpRequest)
-            {
-                httpRequest.HttpContext.Items["policyTimestamp"] = timestamp;
-            }
-            _logger.LogInformation("[METHOD] Injected policy timestamp: {Timestamp}", timestamp);
-        };
+            return [];
+        }
+
+        return [new ScopedHandler(new ConstraintHandler.Runner(Inject), SignalType.Decision, 0)];
+    }
+
+    private void Inject()
+    {
+        var timestamp = DateTime.UtcNow.ToString("o");
+        if (accessor.HttpContext is { } httpContext)
+        {
+            httpContext.Items["policyTimestamp"] = timestamp;
+        }
+
+        logger.LogInformation("[METHOD] Injected policy timestamp: {Timestamp}", timestamp);
     }
 }

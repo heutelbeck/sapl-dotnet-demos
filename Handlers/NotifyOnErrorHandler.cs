@@ -1,27 +1,25 @@
 using System.Text.Json;
-using Sapl.Core.Constraints.Api;
+using Sapl.Core.Pep.Constraints;
 
 namespace Sapl.Demo.Handlers;
 
-public sealed class NotifyOnErrorHandler : IErrorHandlerProvider
+public sealed class NotifyOnErrorHandler(ILogger<NotifyOnErrorHandler> logger) : IConstraintHandlerProvider
 {
-    private readonly ILogger<NotifyOnErrorHandler> _logger;
-
-    public NotifyOnErrorHandler(ILogger<NotifyOnErrorHandler> logger)
+    public IReadOnlyList<ScopedHandler> GetConstraintHandlers(JsonElement constraint, IReadOnlySet<SignalType> supportedSignals)
     {
-        _logger = logger;
-    }
-
-    public bool IsResponsible(JsonElement constraint)
-    {
-        return constraint.TryGetProperty("type", out var t) && t.GetString() == "notifyOnError";
-    }
-
-    public Action<Exception> GetHandler(JsonElement constraint)
-    {
-        return error =>
+        if (!IConstraintHandlerProvider.ConstraintIsOfType(constraint, "notifyOnError"))
         {
-            _logger.LogWarning("[ERROR-NOTIFY] Error during policy-protected operation: {Message}", error.Message);
-        };
+            return [];
+        }
+
+        return [new ScopedHandler(new ConstraintHandler.Consumer(Notify), SignalType.Error, 0)];
+    }
+
+    private void Notify(object? value)
+    {
+        if (value is Exception error)
+        {
+            logger.LogWarning("[ERROR-NOTIFY] Error during policy-protected operation: {Message}", error.Message);
+        }
     }
 }

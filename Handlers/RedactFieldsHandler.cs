@@ -1,61 +1,59 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Sapl.Core.Authorization;
-using Sapl.Core.Constraints.Api;
+using Sapl.Core.Pep.Constraints;
 
 namespace Sapl.Demo.Handlers;
 
-public sealed class RedactFieldsHandler : IMappingConstraintHandlerProvider
+public sealed class RedactFieldsHandler(ILogger<RedactFieldsHandler> logger) : IConstraintHandlerProvider
 {
-    private readonly ILogger<RedactFieldsHandler> _logger;
-
-    public RedactFieldsHandler(ILogger<RedactFieldsHandler> logger)
+    public IReadOnlyList<ScopedHandler> GetConstraintHandlers(JsonElement constraint, IReadOnlySet<SignalType> supportedSignals)
     {
-        _logger = logger;
-    }
-
-    public bool IsResponsible(JsonElement constraint)
-    {
-        return constraint.TryGetProperty("type", out var t) && t.GetString() == "redactFields";
-    }
-
-    public int Priority => 0;
-
-    public Func<object, object> GetHandler(JsonElement constraint)
-    {
-        var fields = new List<string>();
-        if (constraint.TryGetProperty("fields", out var f) && f.ValueKind == JsonValueKind.Array)
+        if (!IConstraintHandlerProvider.ConstraintIsOfType(constraint, "redactFields"))
         {
-            foreach (var field in f.EnumerateArray())
-            {
-                var name = field.GetString();
-                if (name is not null)
-                {
-                    fields.Add(name);
-                }
-            }
+            return [];
         }
 
-        return value =>
+        var output = supportedSignals.FirstOrDefault(signal => signal.Kind == SignalKind.Output);
+        if (output is null)
         {
-            var json = value is JsonElement el
-                ? el.GetRawText()
-                : JsonSerializer.Serialize(value, SerializerDefaults.Options);
-            var node = JsonNode.Parse(json);
-            if (node is JsonObject obj)
-            {
-                foreach (var field in fields)
-                {
-                    if (obj.ContainsKey(field))
-                    {
-                        obj[field] = "[REDACTED]";
-                        _logger.LogInformation("[REDACT] Redacting field: {Field}", field);
-                    }
-                }
-                var resultJson = obj.ToJsonString();
-                return JsonDocument.Parse(resultJson).RootElement.Clone();
-            }
+            return [];
+        }
+
+        var fields = ReadFields(constraint);
+        return [new ScopedHandler(new ConstraintHandler.Mapper(value => Redact(value, fields)), output, 0)];
+    }
+
+    private object? Redact(object? value, IReadOnlyList<string> fields)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        var json = value is JsonElement element ? element.GetRawText() : JsonSerializer.Serialize(value, SerializerDefaults.Options);
+        if (JsonNode.Parse(json) is not JsonObject obj)
+        {
             return value;
-        };
+        }
+
+        foreach (var field in fields.Where(obj.ContainsKey))
+        {
+            obj[field] = "[REDACTED]";
+            logger.LogInformation("[REDACT] Redacting field: {Field}", field);
+        }
+
+        return JsonDocument.Parse(obj.ToJsonString()).RootElement.Clone();
+    }
+
+    private static List<string> ReadFields(JsonElement constraint)
+    {
+        var fields = new List<string>();
+        if (constraint.TryGetProperty("fields", out var array) && array.ValueKind == JsonValueKind.Array)
+        {
+            fields.AddRange(array.EnumerateArray().Select(field => field.GetString()).OfType<string>());
+        }
+
+        return fields;
     }
 }

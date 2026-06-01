@@ -1,27 +1,18 @@
 using System.Text.Json;
-using Sapl.Core.Constraints.Api;
+using Sapl.Core.Pep.Constraints;
 
 namespace Sapl.Demo.Handlers;
 
-public sealed class LogAccessHandler : IRunnableConstraintHandlerProvider
+public sealed class LogAccessHandler(ILogger<LogAccessHandler> logger) : IConstraintHandlerProvider
 {
-    private readonly ILogger<LogAccessHandler> _logger;
-
-    public LogAccessHandler(ILogger<LogAccessHandler> logger)
+    public IReadOnlyList<ScopedHandler> GetConstraintHandlers(JsonElement constraint, IReadOnlySet<SignalType> supportedSignals)
     {
-        _logger = logger;
-    }
+        if (!IConstraintHandlerProvider.ConstraintIsOfType(constraint, "logAccess"))
+        {
+            return [];
+        }
 
-    public bool IsResponsible(JsonElement constraint)
-    {
-        return constraint.TryGetProperty("type", out var t) && t.GetString() == "logAccess";
-    }
-
-    public Signal Signal => Signal.OnDecision;
-
-    public Action GetHandler(JsonElement constraint)
-    {
-        var message = constraint.TryGetProperty("message", out var m) ? m.GetString() ?? "Access logged" : "Access logged";
-        return () => _logger.LogInformation("[POLICY] {Message}", message);
+        var message = IConstraintHandlerProvider.StringField(constraint, "message") ?? "Access logged";
+        return [new ScopedHandler(new ConstraintHandler.Runner(() => logger.LogInformation("[POLICY] {Message}", message)), SignalType.Decision, 0)];
     }
 }

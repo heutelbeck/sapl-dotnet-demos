@@ -1,32 +1,29 @@
 using System.Text.Json;
-using Sapl.Core.Constraints.Api;
+using Sapl.Core.Pep.Constraints;
 
 namespace Sapl.Demo.Handlers;
 
-public sealed class EnrichErrorHandler : IErrorMappingConstraintHandlerProvider
+public sealed class EnrichErrorHandler(ILogger<EnrichErrorHandler> logger) : IConstraintHandlerProvider
 {
-    private readonly ILogger<EnrichErrorHandler> _logger;
-
-    public EnrichErrorHandler(ILogger<EnrichErrorHandler> logger)
+    public IReadOnlyList<ScopedHandler> GetConstraintHandlers(JsonElement constraint, IReadOnlySet<SignalType> supportedSignals)
     {
-        _logger = logger;
-    }
-
-    public bool IsResponsible(JsonElement constraint)
-    {
-        return constraint.TryGetProperty("type", out var t) && t.GetString() == "enrichError";
-    }
-
-    public int Priority => 0;
-
-    public Func<Exception, Exception> GetHandler(JsonElement constraint)
-    {
-        var supportUrl = constraint.TryGetProperty("supportUrl", out var s) ? s.GetString() ?? "https://support.example.com" : "https://support.example.com";
-
-        return error =>
+        if (!IConstraintHandlerProvider.ConstraintIsOfType(constraint, "enrichError"))
         {
-            _logger.LogInformation("[ERROR-ENRICH] Enriching error with support URL: {SupportUrl}", supportUrl);
-            return new InvalidOperationException($"{error.Message} | Support: {supportUrl}", error);
-        };
+            return [];
+        }
+
+        var supportUrl = IConstraintHandlerProvider.StringField(constraint, "supportUrl") ?? "https://support.example.com";
+        return [new ScopedHandler(new ConstraintHandler.Mapper(value => Enrich(value, supportUrl)), SignalType.Error, 0)];
+    }
+
+    private object? Enrich(object? value, string supportUrl)
+    {
+        if (value is not Exception error)
+        {
+            return value;
+        }
+
+        logger.LogInformation("[ERROR-ENRICH] Enriching error with support URL: {SupportUrl}", supportUrl);
+        return new InvalidOperationException($"{error.Message} | Support: {supportUrl}", error);
     }
 }

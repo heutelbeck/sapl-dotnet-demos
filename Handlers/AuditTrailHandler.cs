@@ -1,34 +1,35 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
-using Sapl.Core.Constraints.Api;
+using Sapl.Core.Pep.Constraints;
 
 namespace Sapl.Demo.Handlers;
 
-public sealed class AuditTrailHandler : IConsumerConstraintHandlerProvider
+public sealed class AuditTrailHandler(ILogger<AuditTrailHandler> logger) : IConstraintHandlerProvider
 {
-    private readonly ILogger<AuditTrailHandler> _logger;
     private readonly ConcurrentBag<object> _auditLog = [];
 
-    public AuditTrailHandler(ILogger<AuditTrailHandler> logger)
+    public IReadOnlyList<ScopedHandler> GetConstraintHandlers(JsonElement constraint, IReadOnlySet<SignalType> supportedSignals)
     {
-        _logger = logger;
-    }
-
-    public bool IsResponsible(JsonElement constraint)
-    {
-        return constraint.TryGetProperty("type", out var t) && t.GetString() == "auditTrail";
-    }
-
-    public Action<object> GetHandler(JsonElement constraint)
-    {
-        var action = constraint.TryGetProperty("action", out var a) ? a.GetString() ?? "unknown" : "unknown";
-        return value =>
+        if (!IConstraintHandlerProvider.ConstraintIsOfType(constraint, "auditTrail"))
         {
-            var entry = new { timestamp = DateTime.UtcNow.ToString("o"), action, value };
-            _auditLog.Add(entry);
-            _logger.LogInformation("[AUDIT] {Action}: recorded response", action);
-        };
+            return [];
+        }
+
+        var output = supportedSignals.FirstOrDefault(signal => signal.Kind == SignalKind.Output);
+        if (output is null)
+        {
+            return [];
+        }
+
+        var action = IConstraintHandlerProvider.StringField(constraint, "action") ?? "unknown";
+        return [new ScopedHandler(new ConstraintHandler.Consumer(value => Record(action, value)), output, 0)];
     }
 
     public IReadOnlyList<object> GetAuditLog() => [.. _auditLog];
+
+    private void Record(string action, object? value)
+    {
+        _auditLog.Add(new { timestamp = DateTime.UtcNow.ToString("o"), action, value });
+        logger.LogInformation("[AUDIT] {Action}: recorded response", action);
+    }
 }

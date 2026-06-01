@@ -12,7 +12,7 @@ This demo covers the full range of SAPL enforcement patterns:
 | Constraint handlers | `GET /api/constraints/*` | Redaction, filtering, logging, auditing, timestamps, error handling, resource replacement |
 | Service-layer enforcement | `GET /api/services/*` | Programmatic enforcement in service classes (not just controllers) |
 | JWT export | `GET /api/exportData/{pilotId}/{sequenceId}` | Bearer-token authorization with secrets |
-| SSE streaming | `GET /api/streaming/heartbeat/*` | Till-denied, drop-while-denied, and recoverable streaming enforcement |
+| SSE streaming | `GET /api/streaming/heartbeat/*` | Till-denied, silent-suspending, and observed-suspending streaming enforcement |
 
 ### Constraint Handler Types Demonstrated
 
@@ -73,8 +73,8 @@ curl http://localhost:3000/api/constraints/timestamped
 
 ```
 curl -N http://localhost:3000/api/streaming/heartbeat/till-denied
-curl -N http://localhost:3000/api/streaming/heartbeat/drop-while-denied
-curl -N http://localhost:3000/api/streaming/heartbeat/recoverable
+curl -N http://localhost:3000/api/streaming/heartbeat/silent-suspending
+curl -N http://localhost:3000/api/streaming/heartbeat/observed-suspending
 ```
 
 ## Getting a Token
@@ -106,9 +106,9 @@ All passwords are `password`.
 
 ```
 sapl-dotnet-demos/
-  Controllers/          API controllers with @PreEnforce / @PostEnforce attributes
-  Handlers/             Constraint handler implementations (one per handler type)
-  Services/             Service-layer enforcement with EnforcementEngine
+  Controllers/          API controllers with [PreEnforce] / [PostEnforce] attributes
+  Handlers/             Constraint handler implementations (one IConstraintHandlerProvider each)
+  Services/             Service-layer enforcement via AddSaplService (DispatchProxy) with attributes on the interface
   Data/                 In-memory patient data
   policies/             SAPL policy files loaded by the PDP
   keycloak/             Keycloak realm export (users, client, mappers)

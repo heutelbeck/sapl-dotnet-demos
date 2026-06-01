@@ -1,12 +1,12 @@
 using System.Text.Json;
 using Sapl.Core.Authorization;
-using Sapl.Core.Constraints.Api;
+using Sapl.Core.Pep.Constraints;
 
 namespace Sapl.Demo.Handlers;
 
-public sealed class ClassificationFilterHandler : IFilterPredicateConstraintHandlerProvider
+public sealed class ClassificationFilterHandler(ILogger<ClassificationFilterHandler> logger) : IConstraintHandlerProvider
 {
-    private static readonly Dictionary<string, int> ClassificationLevels = new()
+    private static readonly Dictionary<string, int> Levels = new()
     {
         ["PUBLIC"] = 0,
         ["INTERNAL"] = 1,
@@ -14,53 +14,54 @@ public sealed class ClassificationFilterHandler : IFilterPredicateConstraintHand
         ["SECRET"] = 3,
     };
 
-    private readonly ILogger<ClassificationFilterHandler> _logger;
-
-    public ClassificationFilterHandler(ILogger<ClassificationFilterHandler> logger)
+    public IReadOnlyList<ScopedHandler> GetConstraintHandlers(JsonElement constraint, IReadOnlySet<SignalType> supportedSignals)
     {
-        _logger = logger;
-    }
-
-    public bool IsResponsible(JsonElement constraint)
-    {
-        return constraint.TryGetProperty("type", out var t) && t.GetString() == "filterByClassification";
-    }
-
-    public Func<object, bool> GetHandler(JsonElement constraint)
-    {
-        var maxLevel = constraint.TryGetProperty("maxLevel", out var m) ? m.GetString() ?? "PUBLIC" : "PUBLIC";
-        var maxRank = ClassificationLevels.GetValueOrDefault(maxLevel, 0);
-
-        return element =>
+        if (!IConstraintHandlerProvider.ConstraintIsOfType(constraint, "filterByClassification"))
         {
-            string? classification = null;
-            if (element is JsonElement je && je.TryGetProperty("classification", out var c))
+            return [];
+        }
+
+        var output = supportedSignals.FirstOrDefault(signal => signal.Kind == SignalKind.Output);
+        if (output is null)
+        {
+            return [];
+        }
+
+        var maxLevel = IConstraintHandlerProvider.StringField(constraint, "maxLevel") ?? "PUBLIC";
+        var maxRank = Levels.GetValueOrDefault(maxLevel, 0);
+        return [new ScopedHandler(new ConstraintHandler.Mapper(value => Filter(value, maxRank)), output, 0)];
+    }
+
+    private object? Filter(object? value, int maxRank)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        var array = value is JsonElement element ? element : JsonSerializer.SerializeToElement(value, SerializerDefaults.Options);
+        if (array.ValueKind != JsonValueKind.Array)
+        {
+            return value;
+        }
+
+        var kept = new List<JsonElement>();
+        foreach (var item in array.EnumerateArray())
+        {
+            var classification = item.ValueKind == JsonValueKind.Object &&
+                                 item.TryGetProperty("classification", out var field) && field.ValueKind == JsonValueKind.String
+                ? field.GetString()
+                : null;
+            if (classification is not null && Levels.TryGetValue(classification, out var rank) && rank <= maxRank)
             {
-                classification = c.GetString();
+                kept.Add(item.Clone());
             }
             else
             {
-                var json = JsonSerializer.Serialize(element, SerializerDefaults.Options);
-                using var doc = JsonDocument.Parse(json);
-                if (doc.RootElement.TryGetProperty("classification", out var cls))
-                {
-                    classification = cls.GetString();
-                }
+                logger.LogInformation("[FILTER] excluded {Classification} element", classification);
             }
+        }
 
-            if (classification is null || !ClassificationLevels.TryGetValue(classification, out var rank))
-            {
-                _logger.LogWarning("[FILTER] Element excluded: unknown classification");
-                return false;
-            }
-
-            if (rank > maxRank)
-            {
-                _logger.LogInformation("[FILTER] Excluded {Classification} element (max: {MaxLevel})", classification, maxLevel);
-                return false;
-            }
-
-            return true;
-        };
+        return JsonSerializer.SerializeToElement(kept, SerializerDefaults.Options);
     }
 }

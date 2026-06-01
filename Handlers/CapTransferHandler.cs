@@ -1,34 +1,30 @@
 using System.Text.Json;
-using Sapl.Core.Constraints.Api;
+using Sapl.Core.Pep.Constraints;
 
 namespace Sapl.Demo.Handlers;
 
-public sealed class CapTransferHandler : IMethodInvocationConstraintHandlerProvider
+public sealed class CapTransferHandler(ILogger<CapTransferHandler> logger) : IConstraintHandlerProvider
 {
-    private readonly ILogger<CapTransferHandler> _logger;
-
-    public CapTransferHandler(ILogger<CapTransferHandler> logger)
+    public IReadOnlyList<ScopedHandler> GetConstraintHandlers(JsonElement constraint, IReadOnlySet<SignalType> supportedSignals)
     {
-        _logger = logger;
-    }
-
-    public bool IsResponsible(JsonElement constraint)
-    {
-        return constraint.TryGetProperty("type", out var t) && t.GetString() == "capTransferAmount";
-    }
-
-    public Action<MethodInvocationContext> GetHandler(JsonElement constraint)
-    {
-        var maxAmount = constraint.TryGetProperty("maxAmount", out var m) ? m.GetDouble() : 5000;
-
-        return context =>
+        if (!IConstraintHandlerProvider.ConstraintIsOfType(constraint, "capTransferAmount"))
         {
-            if (context.Args.Length > 0 && context.Args[0] is double requested && requested > maxAmount)
-            {
-                _logger.LogInformation("[CAP] {Class}.{Method} args[0]: {Requested} -> {Max} (limit: {Max})",
-                    context.ClassName, context.MethodName, requested, maxAmount, maxAmount);
-                context.Args[0] = maxAmount;
-            }
-        };
+            return [];
+        }
+
+        var maxAmount = constraint.TryGetProperty("maxAmount", out var max) && max.TryGetDouble(out var value) ? value : 5000d;
+        return [new ScopedHandler(new ConstraintHandler.Mapper(arguments => Cap(arguments, maxAmount)), SignalType.Input, 0)];
+    }
+
+    private object? Cap(object? arguments, double maxAmount)
+    {
+        if (arguments is IDictionary<string, object?> args &&
+            args.TryGetValue("amount", out var raw) && raw is double requested && requested > maxAmount)
+        {
+            logger.LogInformation("[CAP] transfer amount {Requested} -> {Max}", requested, maxAmount);
+            args["amount"] = maxAmount;
+        }
+
+        return arguments;
     }
 }
