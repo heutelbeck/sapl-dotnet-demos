@@ -15,4 +15,15 @@ public sealed class StreamingService : IStreamingService
             await Task.Delay(2000, ct);
         }
     }
+
+    public async IAsyncEnumerable<object?> EnforcedHeartbeats([EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var sequence = 0;
+        while (!ct.IsCancellationRequested)
+        {
+            yield return new Heartbeat(sequence, DateTime.UtcNow.ToString("o"));
+            sequence++;
+            await Task.Delay(2000, ct);
+        }
+    }
 }

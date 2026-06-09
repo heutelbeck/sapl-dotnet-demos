@@ -23,4 +23,9 @@ public sealed class StreamingController(IStreamingService streamingService) : Co
     [StreamEnforce(Action = "stream:suspend", Resource = "heartbeat", SignalTransitions = true)]
     public IAsyncEnumerable<Heartbeat> HeartbeatObservedSuspending() =>
         streamingService.Heartbeats(HttpContext.RequestAborted);
+
+    // Service-layer streaming: enforcement is on IStreamingService.EnforcedHeartbeats, not here.
+    [HttpGet("/api/services/streaming/heartbeat/observed-suspending")]
+    public IAsyncEnumerable<object?> ServiceHeartbeatObservedSuspending() =>
+        streamingService.EnforcedHeartbeats(HttpContext.RequestAborted);
 }

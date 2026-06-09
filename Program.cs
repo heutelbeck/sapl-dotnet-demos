@@ -2,10 +2,11 @@ using Sapl.AspNetCore.Extensions;
 using Sapl.Core.Pep.Constraints;
 using Sapl.Demo.Handlers;
 using Sapl.Demo.Services;
+using Sapl.Demo.Streaming;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers()
+builder.Services.AddControllers(options => options.Filters.Add<SseStreamResultFilter>())
     .AddJsonOptions(options =>
         options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase);
 
@@ -23,11 +24,11 @@ builder.Services.AddSaplConstraintHandler<EnrichErrorHandler>();
 builder.Services.AddSingleton<AuditTrailHandler>();
 builder.Services.AddSingleton<IConstraintHandlerProvider>(sp => sp.GetRequiredService<AuditTrailHandler>());
 
-// Domain-level enforcement: IPatientService methods carry the attributes and are
-// intercepted by the DispatchProxy. Streaming stays controller-level (StreamingController
-// carries [StreamEnforce]), so IStreamingService is a plain registration.
+// Domain-level enforcement: IPatientService and IStreamingService methods carry the attributes
+// and are intercepted by the DispatchProxy. The streaming controller still uses controller-level
+// [StreamEnforce]; IStreamingService.EnforcedHeartbeats demonstrates the service-level variant.
 builder.Services.AddSaplService<IPatientService, PatientService>();
-builder.Services.AddSingleton<IStreamingService, StreamingService>();
+builder.Services.AddSaplService<IStreamingService, StreamingService>();
 
 var app = builder.Build();
 
