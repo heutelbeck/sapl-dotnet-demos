@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -23,3 +24,63 @@ jobs:
 
       - name: Build
         run: dotnet build --no-restore
+
+  e2e:
+    name: End-to-end (demo enforced against a real PDP)
+    # Heavier than the build check (brings up a stack and runs the scenario
+    # suite), so it runs on main and on demand rather than on every PR.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out demo
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          path: sapl-dotnet-demos
+
+      - name: Check out shared scenario harness
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: heutelbeck/sapl-python-demos
+          path: sapl-python-demos
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Start SAPL Node and Keycloak
+        working-directory: sapl-dotnet-demos
+        run: docker compose up -d
+
+      - name: Wait for the Keycloak realm and the PDP
+        run: |
+          echo "Waiting for the Keycloak 'demo' realm..."
+          for i in $(seq 1 90); do
+            curl -sf http://localhost:8080/realms/demo/.well-known/openid-configuration >/dev/null 2>&1 && { echo "realm ready"; break; }
+            sleep 2
+          done
+          echo "Waiting for the PDP..."
+          for i in $(seq 1 40); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8443/api/pdp/decide-once 2>/dev/null || echo 000)
+            [ "$code" != "000" ] && { echo "PDP ready (http $code)"; break; }
+            sleep 2
+          done
+
+      - name: Build and start the demo
+        working-directory: sapl-dotnet-demos
+        run: |
+          dotnet build sapl-dotnet-demos.csproj -c Release
+          nohup dotnet run --project sapl-dotnet-demos.csproj -c Release --no-build > "$RUNNER_TEMP/demo.log" 2>&1 &
+          echo "Waiting for the demo on :3000..."
+          for i in $(seq 1 45); do
+            curl -sf http://localhost:3000/api/hello >/dev/null 2>&1 && { echo "demo ready"; break; }
+            sleep 2
+          done
+
+      - name: Run the scenario suite (with JWT)
+        run: bash sapl-python-demos/test_demo.sh http://localhost:3000 --jwt
+
+      - name: Demo log on failure
+        if: failure()
+        run: cat "$RUNNER_TEMP/demo.log" || true
